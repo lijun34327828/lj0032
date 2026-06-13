@@ -1,0 +1,14 @@
+{
+  "name": "cycling-club-system",
+  "version": "1.0.0",
+  "description": "骑行俱乐部管理系统",
+  "scripts": {
+    "install:all": "cd server && npm install && cd ../web && npm install",
+    "dev": "concurrently -n SERVER,WEB -c blue,green \"npm:server\" \"npm:web\"",
+    "server": "cd server && npm start",
+    "web": "cd web && npm run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
