@@ -327,6 +327,10 @@ function getLocalNow() {
 }
 
 function calcAvailableStock(equipmentId, startTime, endTime) {
+  const eq = queryOne('SELECT total_stock, status FROM equipment WHERE id = ?', [equipmentId]);
+  if (!eq) return 0;
+  if (eq.status !== '正常') return 0;
+
   let sql = `SELECT COALESCE(SUM(quantity), 0) as total FROM rentals
              WHERE equipment_id = ? AND status IN ('已预约', '使用中')`;
   const params = [equipmentId];
@@ -341,8 +345,6 @@ function calcAvailableStock(equipmentId, startTime, endTime) {
   }
 
   const occupied = queryOne(sql, params).total;
-  const eq = queryOne('SELECT total_stock FROM equipment WHERE id = ?', [equipmentId]);
-  if (!eq) return 0;
   return Math.max(0, eq.total_stock - occupied);
 }
 
@@ -579,19 +581,31 @@ app.post('/api/damage-records', (req, res) => {
     severity || '轻微', repair_cost || 0, handler || '', remark || '']
   );
 
-  if (severity === '严重' || severity === '报废') {
+  if (severity === '报废') {
+    run("UPDATE equipment SET status = '报废', total_stock = MAX(0, total_stock - 1) WHERE id = ?", [equipment_id]);
+  } else if (severity === '严重') {
     run("UPDATE equipment SET status = '维修中' WHERE id = ?", [equipment_id]);
   }
 
+  refreshEquipmentStock(equipment_id);
   res.json({ success: true, data: { id: info.lastInsertRowid } });
 });
 
 app.put('/api/damage-records/:id', (req, res) => {
   const { status, handler, remark } = req.body;
+  const record = queryOne('SELECT * FROM damage_records WHERE id = ?', [req.params.id]);
+  if (!record) return res.json({ success: false, message: '损耗记录不存在' });
+
   run(
     `UPDATE damage_records SET status = ?, handler = ?, remark = ? WHERE id = ?`,
     [status || '待处理', handler || '', remark || '', req.params.id]
   );
+
+  if (status === '已完成' && record.severity !== '报废') {
+    run("UPDATE equipment SET status = '正常' WHERE id = ?", [record.equipment_id]);
+    refreshEquipmentStock(record.equipment_id);
+  }
+
   res.json({ success: true });
 });
 

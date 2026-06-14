@@ -68,7 +68,7 @@
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" link @click="openDialog(row)">编辑</el-button>
-            <el-button type="warning" link @click="$router.push('/rentals')" v-if="row.available_stock > 0">租借</el-button>
+            <el-button type="warning" link @click="$router.push('/rentals')" v-if="row.status === '正常' && row.available_stock > 0">租借</el-button>
             <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>

@@ -204,6 +204,7 @@ async function submitHandle() {
   ElMessage.success('处理完成')
   handleDialogVisible.value = false
   loadList()
+  loadEquipments()
 }
 
 onMounted(() => {
