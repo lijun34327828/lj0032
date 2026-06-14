@@ -102,7 +102,10 @@
         <el-row :gutter="16">
           <el-col :span="8">
             <el-form-item label="数量" prop="quantity">
-              <el-input-number v-model="form.quantity" :min="1" controls-position="right" style="width: 100%;" />
+              <el-input-number v-model="form.quantity" :min="1" :max="periodAvailable ?? 9999" controls-position="right" style="width: 100%;" />
+              <div v-if="periodAvailable !== null" style="font-size: 12px; color: #909399; margin-top: 4px;">
+                该时段可用：<span :style="{ color: periodAvailable > 0 ? '#67c23a' : '#f56c6c', fontWeight: 600 }">{{ periodAvailable }}</span> 件
+              </div>
             </el-form-item>
           </el-col>
           <el-col :span="8">
@@ -150,6 +153,7 @@ const defaultForm = () => ({
 })
 const form = reactive(defaultForm())
 const currentEquip = ref(null)
+const periodAvailable = ref(null)
 
 const rules = {
   equipment_id: [{ required: true, message: '请选择器材', trigger: 'change' }],
@@ -205,14 +209,38 @@ async function loadActivities() {
   activities.value = res.data
 }
 
+async function checkPeriodAvailable() {
+  if (form.equipment_id && form.start_time && form.end_time) {
+    try {
+      const res = await request.post('/equipment/check-availability', {
+        equipment_id: form.equipment_id,
+        start_time: form.start_time,
+        end_time: form.end_time,
+        quantity: form.quantity
+      })
+      periodAvailable.value = res.data.available
+      if (form.quantity > periodAvailable.value) {
+        form.quantity = Math.max(1, periodAvailable.value)
+      }
+    } catch (e) {
+      periodAvailable.value = null
+    }
+  } else {
+    periodAvailable.value = null
+  }
+}
+
 function onEquipChange(id) {
   currentEquip.value = equipments.value.find(e => e.id === id) || null
   if (currentEquip.value && form.quantity > currentEquip.value.available_stock) {
     form.quantity = Math.max(1, currentEquip.value.available_stock)
   }
+  checkPeriodAvailable()
 }
 
-watch([() => form.equipment_id, () => form.start_time, () => form.end_time, () => form.quantity, () => form.unit_type], () => {})
+watch([() => form.equipment_id, () => form.start_time, () => form.end_time], () => {
+  checkPeriodAvailable()
+})
 
 function openDialog() {
   Object.assign(form, defaultForm())
@@ -221,6 +249,7 @@ function openDialog() {
   now.setHours(now.getHours() + 4)
   form.end_time = now.toISOString().slice(0, 16).replace('T', ' ') + ':00'
   currentEquip.value = null
+  periodAvailable.value = null
   dialogVisible.value = true
 }
 

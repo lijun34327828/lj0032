@@ -18,11 +18,12 @@
             <div>
               <el-progress
                 type="dashboard"
-                :percentage="Math.round((detail.current_participants / detail.max_participants) * 100)"
+                :percentage="registrationPercentage"
                 :width="110"
                 :stroke-width="10"
+                color="#409eff"
               >
-                <template #default="{ percentage }>
+                <template #default="scope">
                   <span class="percentage-value">{{ detail.current_participants }}/{{ detail.max_participants }}</span>
                 </template>
               </el-progress>
@@ -46,7 +47,7 @@
         <el-card>
           <template #header>
             <div class="card-header">
-              <span style="font-weight: 600;">报名人员 ({{ detail.registrations.length }} 人)</span>
+              <span style="font-weight: 600;">报名人员 ({{ detail.current_participants }} 人)</span>
               <div>
                 <el-button type="primary" size="small" @click="openRegisterDialog">
                   <el-icon><Plus /></el-icon>&nbsp;新增报名
@@ -179,6 +180,14 @@ const checkInRules = { member_id: [{ required: true, message: '请选择会员',
 const checkedCount = computed(() => (detail.value?.registrations || []).filter(r => r.checked_in).length)
 const unCheckedCount = computed(() => (detail.value?.registrations || []).filter(r => r.status === '已报名' && !r.checked_in).length)
 const registeredList = computed(() => (detail.value?.registrations || []).filter(r => r.status === '已报名' && !r.checked_in))
+const registrationPercentage = computed(() => {
+  const d = detail.value
+  if (!d || !d.max_participants || d.max_participants <= 0) return 0
+  const cur = Number(d.current_participants) || 0
+  const max = Number(d.max_participants) || 1
+  return Math.min(100, Math.round((cur / max) * 100))
+})
+const activeRegistrations = computed(() => (detail.value?.registrations || []).filter(r => r.status === '已报名'))
 
 function getStatusType(status) {
   const map = { '报名中': 'success', '已满员': 'warning', '已结束': 'info', '已归档': 'danger' }

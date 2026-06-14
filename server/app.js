@@ -319,6 +319,39 @@ app.get('/api/activities/:id/check-ins', (req, res) => {
 
 // ================ 器材管理 API ================
 
+function padZero(n) { return n < 10 ? '0' + n : '' + n; }
+function getLocalNow() {
+  const d = new Date();
+  return d.getFullYear() + '-' + padZero(d.getMonth() + 1) + '-' + padZero(d.getDate())
+    + ' ' + padZero(d.getHours()) + ':' + padZero(d.getMinutes()) + ':' + padZero(d.getSeconds());
+}
+
+function calcAvailableStock(equipmentId, startTime, endTime) {
+  let sql = `SELECT COALESCE(SUM(quantity), 0) as total FROM rentals
+             WHERE equipment_id = ? AND status IN ('已预约', '使用中')`;
+  const params = [equipmentId];
+
+  if (startTime && endTime) {
+    sql += ` AND start_time < ? AND end_time > ?`;
+    params.push(endTime, startTime);
+  } else {
+    const now = getLocalNow();
+    sql += ` AND start_time < ? AND end_time > ?`;
+    params.push(now, now);
+  }
+
+  const occupied = queryOne(sql, params).total;
+  const eq = queryOne('SELECT total_stock FROM equipment WHERE id = ?', [equipmentId]);
+  if (!eq) return 0;
+  return Math.max(0, eq.total_stock - occupied);
+}
+
+function refreshEquipmentStock(equipmentId) {
+  const available = calcAvailableStock(equipmentId);
+  run('UPDATE equipment SET available_stock = ? WHERE id = ?', [available, equipmentId]);
+  return available;
+}
+
 app.get('/api/equipment', (req, res) => {
   const { category, keyword, status } = req.query;
   let sql = 'SELECT * FROM equipment WHERE 1=1';
@@ -339,12 +372,16 @@ app.get('/api/equipment', (req, res) => {
   sql += ' ORDER BY id DESC';
 
   const rows = query(sql, params);
+  rows.forEach(eq => {
+    eq.available_stock = calcAvailableStock(eq.id);
+  });
   res.json({ success: true, data: rows });
 });
 
 app.get('/api/equipment/:id', (req, res) => {
   const row = queryOne('SELECT * FROM equipment WHERE id = ?', [req.params.id]);
   if (!row) return res.json({ success: false, message: '器材不存在' });
+  row.available_stock = calcAvailableStock(row.id);
   res.json({ success: true, data: row });
 });
 
@@ -369,17 +406,18 @@ app.post('/api/equipment', (req, res) => {
 
 app.put('/api/equipment/:id', (req, res) => {
   const { name, category, brand, model, serial_no, purchase_date, purchase_price,
-    total_stock, available_stock, status, hourly_rate, daily_rate, remark } = req.body;
+    total_stock, status, hourly_rate, daily_rate, remark } = req.body;
 
   const serialUpd = (serial_no && serial_no.trim()) ? serial_no : null;
+  const stock = total_stock || 1;
   run(
     `UPDATE equipment SET name=?, category=?, brand=?, model=?, serial_no=?, purchase_date=?,
-     purchase_price=?, total_stock=?, available_stock=?, status=?, hourly_rate=?, daily_rate=?, remark=?,
+     purchase_price=?, total_stock=?, status=?, hourly_rate=?, daily_rate=?, remark=?,
      updated_at=datetime('now','localtime') WHERE id=?`,
     [name, category, brand || '', model || '', serialUpd, purchase_date || '',
-    purchase_price || 0, total_stock || 1, available_stock !== undefined ? available_stock : (total_stock || 1),
-    status || '正常', hourly_rate || 0, daily_rate || 0, remark || '', req.params.id]
+    purchase_price || 0, stock, status || '正常', hourly_rate || 0, daily_rate || 0, remark || '', req.params.id]
   );
+  refreshEquipmentStock(req.params.id);
   res.json({ success: true });
 });
 
@@ -395,14 +433,7 @@ app.post('/api/equipment/check-availability', (req, res) => {
   const eq = queryOne('SELECT * FROM equipment WHERE id = ?', [equipment_id]);
   if (!eq) return res.json({ success: false, message: '器材不存在' });
 
-  const occupied = queryOne(
-    `SELECT COALESCE(SUM(quantity), 0) as total FROM rentals
-     WHERE equipment_id = ? AND status IN ('已预约', '使用中')
-     AND start_time < ? AND end_time > ?`,
-    [equipment_id, end_time, start_time]
-  ).total;
-
-  const available = eq.total_stock - occupied;
+  const available = calcAvailableStock(equipment_id, start_time, end_time);
   const qty = quantity || 1;
   const enough = available >= qty;
 
@@ -462,14 +493,9 @@ app.post('/api/rentals', (req, res) => {
   const unitPrice = ut === 'day' ? eq.daily_rate : eq.hourly_rate;
   const totalFee = calculateFee(ut, unitPrice, start_time, end_time);
 
-  const occupied = queryOne(
-    `SELECT COALESCE(SUM(quantity), 0) as total FROM rentals
-     WHERE equipment_id = ? AND status IN ('已预约', '使用中')
-     AND start_time < ? AND end_time > ?`,
-    [equipment_id, end_time, start_time]
-  ).total;
+  const available = calcAvailableStock(equipment_id, start_time, end_time);
 
-  if (eq.total_stock - occupied < qty) {
+  if (available < qty) {
     return res.json({ success: false, message: '该时段库存不足' });
   }
 
@@ -480,6 +506,7 @@ app.post('/api/rentals', (req, res) => {
     [equipment_id, member_id, activity_id || null, start_time, end_time,
     qty, ut, unitPrice, totalFee, remark || '']
   );
+  refreshEquipmentStock(equipment_id);
   res.json({ success: true, data: { id: info.lastInsertRowid, total_fee: totalFee } });
 });
 
@@ -488,14 +515,13 @@ app.post('/api/rentals/:id/pickup', (req, res) => {
   if (!rental) return res.json({ success: false, message: '租赁记录不存在' });
   if (rental.status !== '已预约') return res.json({ success: false, message: '当前状态不可取件' });
 
-  const eq = queryOne('SELECT * FROM equipment WHERE id = ?', [rental.equipment_id]);
-  if (eq.available_stock < rental.quantity) {
+  const available = calcAvailableStock(rental.equipment_id);
+  if (available < rental.quantity) {
     return res.json({ success: false, message: '可用库存不足' });
   }
 
   run("UPDATE rentals SET status = '使用中' WHERE id = ?", [req.params.id]);
-  run('UPDATE equipment SET available_stock = available_stock - ? WHERE id = ?',
-    [rental.quantity, rental.equipment_id]);
+  refreshEquipmentStock(rental.equipment_id);
 
   res.json({ success: true });
 });
@@ -513,8 +539,7 @@ app.post('/api/rentals/:id/return', (req, res) => {
     [now, overdueFee, req.params.id]
   );
 
-  run('UPDATE equipment SET available_stock = available_stock + ? WHERE id = ?',
-    [rental.quantity, rental.equipment_id]);
+  refreshEquipmentStock(rental.equipment_id);
 
   res.json({ success: true, data: { overdue_fee: overdueFee } });
 });
@@ -523,12 +548,8 @@ app.delete('/api/rentals/:id', (req, res) => {
   const rental = queryOne('SELECT * FROM rentals WHERE id = ?', [req.params.id]);
   if (!rental) return res.json({ success: false, message: '租赁记录不存在' });
 
-  if (rental.status === '使用中') {
-    run('UPDATE equipment SET available_stock = available_stock + ? WHERE id = ?',
-      [rental.quantity, rental.equipment_id]);
-  }
-
   run('DELETE FROM rentals WHERE id = ?', [req.params.id]);
+  refreshEquipmentStock(rental.equipment_id);
   res.json({ success: true });
 });
 

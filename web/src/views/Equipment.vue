@@ -134,17 +134,12 @@
           </el-col>
         </el-row>
         <el-row :gutter="16">
-          <el-col :span="8">
-            <el-form-item label="可用库存" v-if="form.id">
-              <el-input-number v-model="form.available_stock" :min="0" :max="form.total_stock" controls-position="right" style="width: 100%;" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
+          <el-col :span="12">
             <el-form-item label="时租(元)" prop="hourly_rate">
               <el-input-number v-model="form.hourly_rate" :min="0" :precision="2" controls-position="right" style="width: 100%;" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :span="12">
             <el-form-item label="日租(元)" prop="daily_rate">
               <el-input-number v-model="form.daily_rate" :min="0" :precision="2" controls-position="right" style="width: 100%;" />
             </el-form-item>
